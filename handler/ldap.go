@@ -63,7 +63,6 @@ func ModifyUser(ctx *gin.Context) {
 }
 
 func DeleteUser(ctx *gin.Context) {
-	//通过http url删除 如/user/delete/zoe 代表删除cn=zoe,ou=users,dc=example,dc=org
 	userCn := ctx.Param("cn")
 	if userCn == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "用户CN不能为空"})
