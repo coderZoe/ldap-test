@@ -4,58 +4,33 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/gin-gonic/gin"
 	"github.com/go-ldap/ldap/v3"
 )
 
-func InitEnterpriseLDAP(ctx *gin.Context) {
-	err := initEnterpriseLDAP()
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, gin.H{"message": "企业LDAP结构初始化成功"})
-}
-
-func ClearEnterpriseLDAP(ctx *gin.Context) {
-	err := clearEnterpriseLDAP()
-	if err != nil {
-		ctx.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(200, gin.H{"message": "企业LDAP结构清除成功"})
-}
-
 // InitEnterpriseLDAP 初始化企业 LDAP 结构
-func initEnterpriseLDAP() error {
-	conn, err := connectAndBindLdap()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
+func DoInitEnterprise(conn *ldap.Conn, baseDN string) error {
 	// 创建组织单元
-	if err := createOUs(conn); err != nil {
+	if err := createOUs(conn, baseDN); err != nil {
 		return err
 	}
 
 	// 创建部门
-	if err := createDepartments(conn); err != nil {
+	if err := createDepartments(conn, baseDN); err != nil {
 		return err
 	}
 
 	// 创建员工
-	if err := createEmployees(conn); err != nil {
+	if err := createEmployees(conn, baseDN); err != nil {
 		return err
 	}
 
 	// 创建资源
-	if err := createResources(conn); err != nil {
+	if err := createResources(conn, baseDN); err != nil {
 		return err
 	}
 
 	// 创建认证组
-	if err := createAuthGroups(conn); err != nil {
+	if err := createAuthGroups(conn, baseDN); err != nil {
 		return err
 	}
 
@@ -63,7 +38,7 @@ func initEnterpriseLDAP() error {
 	return nil
 }
 
-func createOUs(conn *ldap.Conn) error {
+func createOUs(conn *ldap.Conn, baseDN string) error {
 	ous := []struct {
 		dn string
 		ou string
@@ -91,7 +66,7 @@ func createOUs(conn *ldap.Conn) error {
 	return nil
 }
 
-func createDepartments(conn *ldap.Conn) error {
+func createDepartments(conn *ldap.Conn, baseDN string) error {
 	departments := []struct {
 		dn string
 		ou string
@@ -124,7 +99,7 @@ func createDepartments(conn *ldap.Conn) error {
 	return nil
 }
 
-func createEmployees(conn *ldap.Conn) error {
+func createEmployees(conn *ldap.Conn, baseDN string) error {
 	employees := []struct {
 		dn        string
 		uid       string
@@ -176,7 +151,7 @@ func createEmployees(conn *ldap.Conn) error {
 	return nil
 }
 
-func createResources(conn *ldap.Conn) error {
+func createResources(conn *ldap.Conn, baseDN string) error {
 	// 创建打印机
 	printers := []struct {
 		dn           string
@@ -260,7 +235,7 @@ func createResources(conn *ldap.Conn) error {
 	return nil
 }
 
-func createAuthGroups(conn *ldap.Conn) error {
+func createAuthGroups(conn *ldap.Conn, baseDN string) error {
 	groups := []struct {
 		dn      string
 		cn      string
@@ -311,13 +286,8 @@ func createAuthGroups(conn *ldap.Conn) error {
 
 	return nil
 }
-func clearEnterpriseLDAP() error {
-	conn, err := connectAndBindLdap()
-	if err != nil {
-		return fmt.Errorf("无法连接并绑定到LDAP: %w", err)
-	}
-	defer conn.Close()
-	dnList, err := getAllSubDN()
+func DoClearEnterprise(conn *ldap.Conn, baseDN string) error {
+	dnList, err := doGetAllSubDN(conn, baseDN)
 	//逆序，从叶子节点删除
 	slices.Reverse(dnList)
 	if err != nil {
@@ -337,13 +307,7 @@ func clearEnterpriseLDAP() error {
 	return nil
 }
 
-func getAllSubDN() ([]string, error) {
-	conn, err := connectAndBindLdap()
-	if err != nil {
-		return nil, fmt.Errorf("无法连接并绑定到LDAP: %w", err)
-	}
-	defer conn.Close()
-
+func doGetAllSubDN(conn *ldap.Conn, baseDN string) ([]string, error) {
 	searchRequest := ldap.NewSearchRequest(
 		baseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
@@ -362,4 +326,24 @@ func getAllSubDN() ([]string, error) {
 		dnList = append(dnList, dn)
 	}
 	return dnList, nil
+}
+
+// 爬取企业LDAP结构
+func DoCrawlEnterprise(conn *ldap.Conn, baseDN string) ([]*ldap.Entry, error) {
+	searchRequest := ldap.NewSearchRequest(
+		baseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+		"(objectClass=*)",
+		[]string{"*", "+"}, // 关键：获取所有用户属性和操作属性
+		nil,
+	)
+
+	// 2. 执行搜索
+	sr, err := conn.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("全量搜索DN '%s' 失败: %w", baseDN, err)
+	}
+
+	fmt.Printf("✅ 抓取完成！共找到 %d 个条目。\n", len(sr.Entries))
+	return sr.Entries, nil
 }
