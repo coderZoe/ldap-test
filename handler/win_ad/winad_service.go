@@ -1,8 +1,11 @@
 package win_ad
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/coderZoe/ldap-test/handler"
 	"github.com/go-ldap/ldap/v3"
@@ -11,26 +14,49 @@ import (
 //用于win server ad的LDAP操作
 
 const (
-	winAdHost          = "192.168.31.73"
-	winAdPort          = 636
-	winAdAdminDN       = "Administrator"
-	winAdAdminPassword = "*********"
-	winAdBaseDN        = "CN=Users,DC=example,DC=org"
+	winAdHost    = "DC01.example.org"
+	winAdPort    = 636
+	winAdAdminDN = "cn=Administrator,cn=Users,dc=example,dc=org"
+
+	winAdAdminPassword = "********"
+	winAdBaseDN        = "dc=example,dc=org"
+
+	caPemPath = "ldaps.pem"
 )
 
-func connectWinAd() (*ldap.Conn, error) {
-	conn, err := ldap.DialURL(fmt.Sprintf("ldap://%s:%d", winAdHost, winAdPort))
+func mustRootPool() *x509.CertPool {
+	pem, err := os.ReadFile(caPemPath)
 	if err != nil {
-		log.Printf("无法连接到LDAP服务器 ldap://%s:%d,失败原因 %v", winAdHost, winAdPort, err)
-		return nil, err
+		log.Fatalf("读取 CA 失败(%s): %v", caPemPath, err)
+	}
+	cp := x509.NewCertPool()
+	if !cp.AppendCertsFromPEM(pem) {
+		log.Fatalf("加载 CA 失败: 不是有效 PEM")
+	}
+	return cp
+}
+func connectWinAd() (*ldap.Conn, error) {
+	cp := mustRootPool()
+	tlsCfg := &tls.Config{
+		ServerName: winAdHost, // 与证书 SAN 匹配
+		RootCAs:    cp,
+		MinVersion: tls.VersionTLS12,
 	}
 
-	err = conn.Bind(winAdAdminDN, winAdAdminPassword)
+	url := fmt.Sprintf("ldaps://%s:%d", winAdHost, winAdPort)
+
+	conn, err := ldap.DialURL(
+		url,
+		ldap.DialWithTLSConfig(tlsCfg),
+	)
 	if err != nil {
-		log.Printf("无法绑定到LDAP服务器 ldap://%s:%d,失败原因 %v", winAdHost, winAdPort, err)
-		return nil, err
+		return nil, fmt.Errorf("LDAPS 连接失败: %w", err)
 	}
-	fmt.Printf("连接LDAP服务器成功 ldap://%s:%d\n", winAdHost, winAdPort)
+
+	if err := conn.Bind(winAdAdminDN, winAdAdminPassword); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("bind win ad 失败: %w", err)
+	}
 	return conn, nil
 }
 
